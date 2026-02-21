@@ -330,16 +330,86 @@ async function addPrescription(id) {
   const prescription = prompt('Enter prescription:');
   if (!prescription) return;
   try {
-    await fetch(`/api/patients/${id}/prescription`, {
+    // Save to MongoDB
+    const res = await fetch(`/api/patients/${id}/prescription`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prescription })
     });
-    showToast('Prescription added!', 'green');
-    loadPatients();
+    const data = await res.json();
+    if (data.success) {
+      // Save to Blockchain
+      const patient = data.data;
+      try {
+        await fetch('/api/blockchain/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patientId: patient._id,
+            doctorName: currentUser.name,
+            diagnosis: patient.problem || 'N/A',
+            prescription: prescription
+          })
+        });
+        showToast('Prescription added & saved to blockchain! ✓', 'green');
+      } catch (err) {
+        showToast('Prescription saved (blockchain sync failed)', 'yellow');
+      }
+      loadPatients();
+    }
   } catch (err) {
     showToast('Failed!', 'red');
   }
+}
+
+// View Blockchain History
+async function viewBlockchainHistory(patientId, patientName) {
+  if (!navigator.onLine) {
+    showToast('Need internet to view blockchain history!', 'yellow');
+    return;
+  }
+  try {
+    const res = await fetch(`/api/blockchain/history/${patientId}`);
+    const data = await res.json();
+    if (data.success && data.data.length > 0) {
+      let historyHTML = `<h3 class="font-bold text-lg mb-4">📋 ${patientName}'s Blockchain History</h3>`;
+      historyHTML += '<div class="space-y-3">';
+      data.data.forEach(record => {
+        const date = new Date(record.timestamp * 1000).toLocaleString();
+        historyHTML += `
+          <div class="bg-gray-50 p-3 rounded-lg border-l-4 border-sky-400">
+            <p class="font-semibold text-sm">Doctor: ${record.doctorName}</p>
+            <p class="text-sm text-gray-700">Diagnosis: ${record.diagnosis}</p>
+            <p class="text-sm text-purple-600">Rx: ${record.prescription}</p>
+            <p class="text-xs text-gray-400 mt-1">📅 ${date}</p>
+          </div>
+        `;
+      });
+      historyHTML += '</div>';
+      showModal('Blockchain History', historyHTML);
+    } else {
+      showToast('No blockchain records found!', 'yellow');
+    }
+  } catch (err) {
+    showToast('Failed to fetch blockchain history!', 'red');
+    console.log('Blockchain history error:', err);
+  }
+}
+
+// Modal
+function showModal(title, content) {
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl p-6 max-w-md w-full max-h-96 overflow-y-auto">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="font-bold text-xl">${title}</h2>
+        <button onclick="this.closest('.fixed').remove()" class="text-gray-500 hover:text-gray-700 text-2xl">×</button>
+      </div>
+      <div class="text-gray-700">${content}</div>
+    </div>
+  `;
+  document.body.appendChild(modal);
 }
 
 // Load Patients
@@ -408,6 +478,10 @@ function renderPatients(patients, isOffline) {
         <button onclick="addPrescription('${p._id}')"
           class="flex-1 text-xs bg-purple-500 hover:bg-purple-600 text-white py-1 rounded-lg">
           Rx
+        </button>
+        <button onclick="viewBlockchainHistory('${p._id}', '${p.name}')"
+          class="flex-1 text-xs bg-indigo-500 hover:bg-indigo-600 text-white py-1 rounded-lg">
+          Chain
         </button>
         <button onclick="deletePatient('${p._id}')"
           class="flex-1 text-xs bg-red-500 hover:bg-red-600 text-white py-1 rounded-lg">
